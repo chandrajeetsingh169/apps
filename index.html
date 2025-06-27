@@ -1,11 +1,138 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>Xbox Games</title>
+  <meta charset="UTF-8">
+  <title>Full Body & Finger Motion Capture</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas, video {
+      position: absolute;
+      top: 0; left: 0;
+    }
+    #status {
+      position: absolute;
+      top: 10px; left: 10px;
+      padding: 10px;
+      background: rgba(0,0,0,0.6);
+      color: white;
+      font-size: 18px;
+      z-index: 2;
+    }
+  </style>
+
+  <!-- ✅ Required Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 </head>
+
 <body>
-    <h1>Welcome to Xbox Games</h1>
-    <p>This is a basic HTML page.</p>
+  <div id="status">Initializing...</div>
+  <video id="video" width="640" height="480" autoplay muted playsinline></video>
+  <canvas id="output" width="640" height="480"></canvas>
+
+  <script>
+    const videoElement = document.getElementById('video');
+    const canvasElement = document.getElementById('output');
+    const canvasCtx = canvasElement.getContext('2d');
+    const statusDiv = document.getElementById('status');
+
+    let prevLandmarks = null;
+    let lastCaptureTime = 0;
+    let captureCount = 1;
+
+    const holistic = new Holistic({
+      locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+    });
+
+    holistic.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      enableSegmentation: false,
+      refineFaceLandmarks: false,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    holistic.onResults(onResults);
+
+    function drawAllLandmarks(results) {
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.poseLandmarks) {
+        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00'});
+        drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#00FF00', radius: 4});
+      }
+      if (results.rightHandLandmarks) {
+        drawConnectors(canvasCtx, results.rightHandLandmarks, HAND_CONNECTIONS, {color: '#FF0000'});
+        drawLandmarks(canvasCtx, results.rightHandLandmarks, {color: '#FF0000', radius: 3});
+      }
+      if (results.leftHandLandmarks) {
+        drawConnectors(canvasCtx, results.leftHandLandmarks, HAND_CONNECTIONS, {color: '#0000FF'});
+        drawLandmarks(canvasCtx, results.leftHandLandmarks, {color: '#0000FF', radius: 3});
+      }
+
+      canvasCtx.restore();
+    }
+
+    function getAllLandmarks(results) {
+      return [
+        ...(results.poseLandmarks || []),
+        ...(results.leftHandLandmarks || []),
+        ...(results.rightHandLandmarks || [])
+      ];
+    }
+
+    function hasMoved(current, prev, threshold = 0.01) {
+      if (!prev || current.length !== prev.length) return true;
+      for (let i = 0; i < current.length; i++) {
+        const dx = current[i].x - prev[i].x;
+        const dy = current[i].y - prev[i].y;
+        const dz = (current[i].z || 0) - (prev[i].z || 0);
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist > threshold) return true;
+      }
+      return false;
+    }
+
+    function saveSnapshot() {
+      const a = document.createElement('a');
+      a.href = canvasElement.toDataURL("image/png");
+      a.download = `motion_snapshot_${captureCount++}.png`;
+      a.click();
+    }
+
+    function onResults(results) {
+      drawAllLandmarks(results);
+      const landmarks = getAllLandmarks(results);
+      const now = Date.now();
+
+      if (hasMoved(landmarks, prevLandmarks) && now - lastCaptureTime > 2000) {
+        saveSnapshot();
+        lastCaptureTime = now;
+        statusDiv.innerText = "🤖 Movement detected – captured!";
+      } else {
+        statusDiv.innerText = "Waiting for movement...";
+      }
+
+      prevLandmarks = landmarks;
+    }
+
+    async function startCamera() {
+      const camera = new Camera(videoElement, {
+        onFrame: async () => {
+          await holistic.send({ image: videoElement });
+        },
+        width: 640,
+        height: 480
+      });
+      camera.start();
+    }
+
+    startCamera();
+  </script>
 </body>
 </html>
+
